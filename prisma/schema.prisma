@@ -1,0 +1,311 @@
+// HireTrack data model - plan.md section 3
+//
+// Conventions:
+// - Table/column names are snake_case via @@map/@map; Prisma models are PascalCase.
+// - Auth infrastructure tables (Session, Account, VerificationToken, RateLimit)
+//   are introduced in milestone 2 with the auth slice; this file is the domain
+//   model only.
+// - Check constraints Prisma cannot express (rejected_reason, rating range)
+//   live in the migration SQL; Prisma Migrate preserves constraints it does
+//   not manage.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [pg_trgm]
+}
+
+// Enum values are lowercase so DB values, generated client types, and the
+// shared Zod enums in src/lib/schemas.ts are all literally identical.
+enum Role {
+  admin
+  recruiter
+  hiring_manager
+}
+
+enum JobStatus {
+  draft
+  open
+  closed
+}
+
+// Linear pipeline only. Rejection is NOT a stage: an application is rejected
+// when application.rejected_at is set, preserving the stage it was rejected
+// from (feeds funnel/rejection analytics in milestone 8).
+enum Stage {
+  applied
+  screening
+  interview
+  offer
+  hired
+}
+
+enum InterviewType {
+  phone
+  technical
+  onsite
+}
+
+enum InterviewStatus {
+  scheduled
+  completed
+  cancelled
+}
+
+enum Recommendation {
+  strong_yes
+  yes
+  no
+  strong_no
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users        User[]
+  jobs         Job[]
+  candidates   Candidate[]
+  activityLogs ActivityLog[]
+
+  @@map("organization")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  orgId           String    @map("org_id")
+  email           String    @unique
+  // Nullable: users created via Google OAuth have no password; credentials
+  // login explicitly rejects users with a null hash.
+  passwordHash    String?   @map("password_hash")
+  name            String
+  role            Role
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  deactivatedAt   DateTime? @map("deactivated_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdJobs  Job[]         @relation("JobCreatedBy")
+  interviews   Interview[]   @relation("InterviewInterviewer")
+  scorecards   Scorecard[]   @relation("ScorecardSubmittedBy")
+  activityLogs ActivityLog[] @relation("ActivityActor")
+  sessions     Session[]
+  accounts     Account[]
+  emailTokens  EmailToken[]
+
+  @@index([orgId])
+  @@map("user")
+}
+
+// ---------------------------------------------------------------------------
+// Auth infrastructure (milestone 2)
+// ---------------------------------------------------------------------------
+
+// Auth.js database session strategy: one row per live session. Rotation on
+// login/privilege change = new row + delete old; revocation = delete rows.
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+// OAuth account links (Google). Field names follow the Auth.js adapter contract.
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("account")
+}
+
+enum EmailTokenPurpose {
+  verify_email
+  password_reset
+}
+
+// Single-use, expiring tokens for email verification and password reset.
+// Only the SHA-256 hash is stored; the raw token exists in the email link only.
+model EmailToken {
+  id        String            @id @default(cuid())
+  userId    String            @map("user_id")
+  tokenHash String            @unique @map("token_hash")
+  purpose   EmailTokenPurpose
+  expiresAt DateTime          @map("expires_at")
+  usedAt    DateTime?         @map("used_at")
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@map("email_token")
+}
+
+// Postgres-backed fixed-window rate limiting with exponential lockout
+// (plan.md section 11: ~5 attempts / 15 min per IP+account on login/reset).
+model RateLimit {
+  // e.g. "login:203.0.113.7:ada@example.com"
+  key         String    @id
+  attempts    Int       @default(0)
+  windowStart DateTime  @map("window_start")
+  lockedUntil DateTime? @map("locked_until")
+
+  @@map("rate_limit")
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  orgId       String    @map("org_id")
+  title       String
+  department  String
+  location    String
+  status      JobStatus @default(draft)
+  createdById String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  closedAt    DateTime? @map("closed_at")
+
+  organization Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy    User          @relation("JobCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  applications Application[]
+
+  @@index([orgId, status])
+  @@map("job")
+}
+
+model Candidate {
+  id        String   @id @default(cuid())
+  orgId     String   @map("org_id")
+  name      String
+  email     String
+  phone     String?
+  resumeUrl String?  @map("resume_url")
+  source    String?
+  tags      String[] @default([])
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  applications Application[]
+
+  // Dedupe key for re-applications (plan.md section 3 indexes)
+  @@unique([orgId, email])
+  // Trigram search over name/email (plan.md section 3 indexes)
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("candidate")
+}
+
+model Application {
+  id             String    @id @default(cuid())
+  jobId          String    @map("job_id")
+  candidateId    String    @map("candidate_id")
+  stage          Stage     @default(applied)
+  stageUpdatedAt DateTime  @default(now()) @map("stage_updated_at")
+  // Rejection is orthogonal to stage: rejected when rejected_at is set,
+  // keeping the stage the candidate was rejected from
+  rejectedAt     DateTime? @map("rejected_at")
+  // Required when rejected_at is set - CHECK constraint in migration + app-layer Zod refinement
+  rejectedReason String?   @map("rejected_reason")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  // Soft delete (plan.md section 11); re-application revives this row
+  // (clearing rejected_at/rejected_reason) instead of inserting a duplicate
+  deletedAt      DateTime? @map("deleted_at")
+
+  job        Job         @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  candidate  Candidate   @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  interviews Interview[]
+
+  // One application per candidate per job (plan.md section 10 dedupe)
+  @@unique([jobId, candidateId])
+  // Kanban board query: job's non-rejected applications (stage grouping happens over the result)
+  @@index([jobId, rejectedAt])
+  // Per-stage counts and bulk-by-stage actions (plan.md section 3 indexes)
+  @@index([jobId, stage])
+  @@index([candidateId])
+  @@map("application")
+}
+
+model Interview {
+  id            String          @id @default(cuid())
+  applicationId String          @map("application_id")
+  scheduledAt   DateTime        @map("scheduled_at")
+  // Never null - a scheduled interview with no interviewer is a bug (plan.md section 3)
+  interviewerId String          @map("interviewer_id")
+  type          InterviewType
+  status        InterviewStatus @default(scheduled)
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  interviewer User        @relation("InterviewInterviewer", fields: [interviewerId], references: [id], onDelete: Restrict)
+  scorecard   Scorecard?
+
+  // Hiring Manager row-level auth: "my interviews" lookup
+  @@index([interviewerId, scheduledAt])
+  @@index([applicationId])
+  @@map("interview")
+}
+
+model Scorecard {
+  id             String         @id @default(cuid())
+  interviewId    String         @unique @map("interview_id")
+  submittedById  String         @map("submitted_by")
+  // 1-5 - CHECK constraint in migration + Zod
+  rating         Int
+  recommendation Recommendation
+  notes          String
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Restrict)
+  submittedBy User      @relation("ScorecardSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+
+  @@index([submittedById])
+  @@map("scorecard")
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  orgId      String   @map("org_id")
+  actorId    String   @map("actor_id")
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  // e.g. stage_updated | stage_reverted | created | ... - Zod enum in src/lib/schemas.ts
+  action     String
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actor        User         @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  // Per-entity audit queries (plan.md section 3 indexes)
+  @@index([orgId, entityType, entityId])
+  @@map("activity_log")
+}
