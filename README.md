@@ -2,12 +2,12 @@
 
 > HireTrack lets a small hiring team post jobs, move candidates through a visual pipeline, run structured interview scorecards, and see where every req is stuck — without the bloat of an enterprise ATS.
 
-[![CI](https://github.com/devel-o-per/hiretrack/actions/workflows/ci.yml/badge.svg)](https://github.com/devel-o-per/hiretrack/actions/workflows/ci.yml)
+[![CI](https://github.com/arpit2705/HireTrack/actions/workflows/ci.yml/badge.svg)](https://github.com/arpit2705/HireTrack/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-4f46e5.svg)](LICENSE)
 
 ![HireTrack Kanban pipeline board](docs/screenshots/board.png)
 
-**Live demo → [hire-track-arpitravi2705-2574s-projects.vercel.app](https://hire-track-arpitravi2705-2574s-projects.vercel.app)** — log in as `demo@demo.com` / `demo1234`
+**Live demo → [hire-track-black.vercel.app](https://hire-track-black.vercel.app)** — log in as `demo@demo.com` / `demo1234`
 
 ## Features
 
