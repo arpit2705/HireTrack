@@ -7,7 +7,7 @@
 
 ![HireTrack Kanban pipeline board](docs/screenshots/board.png)
 
-**Live demo → [hiretrack-dusky.vercel.app](https://hiretrack-dusky.vercel.app)** — log in as `demo@demo.com` / `demo1234`
+**Live demo → [hire-track-arpitravi2705-2574s-projects.vercel.app](https://hire-track-arpitravi2705-2574s-projects.vercel.app)** — log in as `demo@demo.com` / `demo1234`
 
 ## Features
 
@@ -84,6 +84,75 @@ The e2e suites boot the dev server themselves and need `DATABASE_URL`; they crea
 | ![Jobs list](docs/screenshots/jobs.png) | ![Analytics](docs/screenshots/analytics.png) |
 | ![Candidate timeline](docs/screenshots/candidate-timeline.png) | ![Interviews](docs/screenshots/interviews.png) |
 | ![Settings](docs/screenshots/settings.png) | ![Pipeline board](docs/screenshots/board.png) |
+
+## Case Study
+
+### Problem
+
+Recruitment is often managed using spreadsheets, emails, and multiple communication tools, making it difficult for hiring teams to track candidates, collaborate effectively, and monitor hiring progress. As the number of applicants grows, managing the recruitment pipeline becomes increasingly inefficient.
+
+HireTrack was built to provide a centralized Applicant Tracking System that simplifies the hiring process by enabling recruiters and hiring managers to manage jobs, applications, and candidate progress through a single, intuitive platform.
+
+### Objective
+
+The goal was to build a production-ready full-stack web application that demonstrates modern software engineering practices while solving a real-world recruitment problem — providing a clean user experience, secure authentication, efficient data management, and a scalable architecture suitable for small and medium-sized hiring teams.
+
+### Approach
+
+I followed a full-stack development approach: designing the database schema first, then building layer by layer — authentication and backend APIs before the UI. Each layer was validated with types (TypeScript strict mode), schema contracts (Zod), and automated tests before moving on.
+
+**Stack:** Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 · shadcn/ui · PostgreSQL (Neon) · Prisma · Auth.js · Zod · TanStack Query · dnd-kit · Recharts · Playwright · GitHub Actions · Vercel
+
+### Technical Challenges
+
+**Designing the recruitment workflow** — The primary challenge was representing hiring stages in a way that stays simple for recruiters while correctly modelling edge cases like stage reversion, rejection from any stage, and reinstatement. The rejection model preserves the stage a candidate was rejected from so funnel analytics remain accurate even after reinstatement.
+
+**Search and filtering at scale** — Cursor-based pagination was chosen over offset pagination so that filtering and "next page" remain O(index) rather than O(table-scan) as the candidate pool grows.
+
+**Analytics accuracy** — Time-to-hire excludes reverted-stage time (a candidate sent back from Interview to Screening should not inflate TTH). The funnel counts rejections against the stage they occurred at, not the stage the candidate is currently in.
+
+**Authentication and role-based access** — RBAC is enforced at two independent layers: coarse-grained route rules in the edge proxy (fast path) and fine-grained row-level checks inside each API handler (correctness path). A probe-backed enforcement ledger documents every protected route and its expected HTTP status for each role, and the Playwright suite verifies it.
+
+**Resume security** — File type is determined by magic bytes rather than the `Content-Type` header; a spoofed DOCX named `.exe` is rejected. Files are never served from a public URL — every download goes through an org-scoped, role-checked streaming endpoint.
+
+**Code quality** — TypeScript strict mode, Zod schema validation, Prisma type safety, Vitest unit tests, Playwright e2e tests, and GitHub Actions CI keep the project maintainable as it grows.
+
+### Result
+
+The final application is a fully functional Applicant Tracking System that demonstrates end-to-end full-stack engineering: frontend, backend, database design, authentication, testing, CI, and deployment.
+
+Key outcomes:
+- Complete recruitment workflow from job posting through hire
+- Two-layer RBAC with Playwright-verified enforcement
+- Drag-and-drop Kanban board with optimistic updates and keyboard fallback
+- Accurate funnel and time-to-hire analytics
+- Safe resume upload, storage, and streaming download
+- Bulk operations (reject, CSV export) that survive large datasets and gateway timeouts
+- End-to-end test suite covering the full pipeline, accessibility sweep, and keyboard-only navigation
+
+### What I Learned
+
+- Planning architecture before implementation reduces complexity later — the two-layer RBAC design was sketched out in `docs/architecture.md` before a line of code was written.
+- Strong database design (especially the rejection model and audit log schema) made the backend significantly easier to build and extend.
+- TypeScript strict mode and Prisma eliminate whole categories of runtime bugs before they reach production.
+- Authentication and authorization must be enforced server-side — client-side guards are convenience, not security.
+- Good UX extends beyond functionality: responsiveness, accessibility, keyboard navigation, loading states, optimistic updates, and error recovery all matter.
+- Automated testing and CI give genuine confidence during deployment, not just a green badge.
+
+### Roadmap
+
+Planned future improvements:
+
+- Resume parsing and AI-powered ranking
+- Google OAuth authentication
+- Email notifications (offer letters, interview reminders)
+- Audit log viewer in the settings UI
+- Bulk candidate operations beyond reject (tag, move stage)
+- PDF export in addition to CSV
+- Calendar integration for interview scheduling
+- Real-time notifications via WebSockets or SSE
+
+---
 
 ## License
 
